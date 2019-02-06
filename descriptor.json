@@ -11,7 +11,7 @@
         {
         	"id": "cytomine_host",
       		"value-key": "@ID",
-      		"command-line-flag": "--cytomine_host",
+      		"command-line-flag": "--@id",
       		"name": "Cytomine host",
       		"set-by-server": true,
       		"optional": false,
@@ -22,7 +22,7 @@
 			"value-key": "@ID",
 			"command-line-flag": "--@id",
 			"name": "Cytomine public key",
-			"set-by-server": true,
+            "set-by-server": true,
 			"optional": false,
 			"type": "String"
     	},
@@ -60,10 +60,7 @@
             "name": "Cytomine image IDs",
             "set-by-server": false,
             "optional": false,
-            "type": "ListDomain",
-	        "uri": "/api/project/$currentProject$/imageinstance.json",
-	        "uri-print-attribute": "instanceFilename",
-	        "uri-sort-attribute": "instanceFilename"
+            "type": "String"
         },
         {
             "id": "model_njobs",
