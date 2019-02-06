@@ -25,7 +25,6 @@ from ldmtools import *
 import sys
 import scipy.ndimage as snd
 from multiprocessing import Pool
-from cytomine import CytomineJob, Cytomine
 from download import *
 from cytomine.models import Annotation, Job, ImageInstanceCollection, AnnotationCollection, Property, AttachedFileCollection, AttachedFile
 from sklearn.ensemble import ExtraTreesClassifier
@@ -77,10 +76,13 @@ def main():
 		DATA = None
 		REP = None
 		be = 0
-
 		sfinal = ""
+		for id_term in term_list:
+			sfinal += "%d " % id_term
+		sfinal = sfinal.rstrip(' ')
 		for id_term in conn.monitor(term_list, start=10, end=90, period=0.05, prefix="Model building for terms..."):
-			sfinal+="%d "%id_term
+			print('wtf, termid', id_term)
+
 			(xc, yc, xr, yr) = getcoordsim_neubias(gt_path, id_term, tr_im)
 			nimages = np.max(xc.shape)
 			mx = np.mean(xr)
@@ -133,11 +135,7 @@ def main():
 			clf = clf.fit(DATA, REP)
 
 			parameters_hash = {}
-			tstring = ""
-			for id_term in term_list:
-				tstring = tstring+"%d,"%(id_term)
-			tstring = tstring.rstrip(',')
-			parameters_hash['cytomine_id_terms'] = tstring
+			parameters_hash['cytomine_id_terms'] = sfinal.replace(' ', ',')
 			parameters_hash['model_R'] = conn.parameters.model_R
 			parameters_hash['model_RMAX'] = conn.parameters.model_RMAX
 			parameters_hash['model_P'] = conn.parameters.model_P
