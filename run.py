@@ -23,113 +23,65 @@ __copyright__ = "Copyright 2010-2016 University of Liège, Belgium, http://www.c
 
 from ldmtools import *
 import sys
+import scipy.ndimage as snd
+from multiprocessing import Pool
 from cytomine import CytomineJob, Cytomine
 from download import *
 from cytomine.models import Annotation, Job, ImageInstanceCollection, AnnotationCollection, Property, AttachedFileCollection, AttachedFile
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.externals import joblib
 import numpy as np
-
-from cytomine.models import Job
-from neubiaswg5 import CLASS_SPTCNT
+import imageio
+from subprocess import call
+from neubiaswg5 import CLASS_LNDDET
 from neubiaswg5.helpers import NeubiasJob, prepare_data, upload_data, upload_metrics, get_discipline
+
+def	getcoordsim_neubias(gt_path, id_term, tr_im):
+	xcs = []
+	ycs = []
+	xrs = []
+	yrs = []
+	for i in range(len(tr_im)):
+		id = tr_im[i]
+		gt_img = imageio.imread(os.path.join(gt_path, '%d.tif'%id))
+		(y, x) = np.where(gt_img==id_term)
+		(h, w) = gt_img.shape
+		yc = y[0]
+		xc = x[0]
+		yr = yc/h
+		xr = xc/w
+		xcs.append(xc)
+		ycs.append(yc)
+		xrs.append(xr)
+		yrs.append(yr)
+	return np.array(xcs), np.array(ycs), np.array(xrs), np.array(yrs)
 
 def main():
 	with NeubiasJob.from_cli(sys.argv) as conn:
-		problem_cls = get_discipline(conn, default=CLASS_SPTCNT)
+		problem_cls = get_discipline(conn, default=CLASS_LNDDET)
 		is_2d = True
-		conn.job.update(status=Job.RUNNING, progress=0, status_comment="Initialization of the training phase")
-		in_images, gt_images, in_path, gt_path, out_path, tmp_path = prepare_data(problem_cls, conn, is_2d=is_2d,**conn.flags)
-		for image in in_images:
-			print("wtf", image)
-		sys.exit()
-		base_path = "{}".format(os.getenv("HOME"))
-		gt_suffix = "_lbl"
-		working_path = os.path.join(base_path, str(conn.job.id))
-		#in_path = os.path.join(working_path, "in/")
-		in_txt = os.path.join(in_path, 'txt/')
-		out_path = os.path.join(working_path, "out/")
-		gt_path = os.path.join(working_path, "ground_truth/")
-		tmp_path = os.path.join(working_path, "tmp/")
+		conn.job.update(status=Job.RUNNING, progress=0, statusComment="Initialization of the training phase")
+		in_images, gt_images, in_path, gt_path, out_path, tmp_path = prepare_data(problem_cls, conn, is_2d=is_2d, **conn.flags)
+		tmax = 1
+		for f in os.listdir(gt_path):
+			if f.endswith('.tif'):
+				gt_img = imageio.imread(os.path.join(gt_path, f))
+				tmax = np.max(gt_img)
+				break
 
-		if not os.path.exists(working_path):
-			os.makedirs(working_path)
-			os.makedirs(in_path)
-			os.makedirs(out_path)
-			os.makedirs(gt_path)
-			os.makedirs(tmp_path)
-			os.makedirs(in_txt)
-		# 2. Download the images (first input, then ground truth image)
-		conn.job.update(progress=10, statusComment="Downloading images (to {})...".format(in_path))
-		print(conn.parameters)
-		images = ImageInstanceCollection().fetch_with_filter("project", conn.parameters.cytomine_id_project)
-		xpos = {}
-		ypos = {}
-		terms = {}
-
-		for image in images:
-			image.dump(dest_pattern=in_path.rstrip('/')+'/%d.%s'%(image.id, conn.parameters.image_type))
-
-			annotations = AnnotationCollection()
-			annotations.project = conn.parameters.cytomine_id_project
-			annotations.showWKT = True
-			annotations.showMeta = True
-			annotations.showGIS = True
-			annotations.showTerm = True
-			annotations.image = image.id
-			annotations.fetch()
-
-			for ann in annotations:
-				l = ann.location
-				if l.rfind('POINT') == -1:
-					pol = shapely.wkt.loads(l)
-					poi = pol.centroid
-				else:
-					poi = shapely.wkt.loads(l)
-				(cx, cy) = poi.xy
-				xpos[(ann.term[0], image.id)] = int(cx[0])
-				ypos[(ann.term[0], image.id)] = image.height - int(cy[0])
-				terms[ann.term[0]] = 1
-
-		for image in images:
-			F = open(in_txt + '%d.txt' % image.id, 'w')
-			for t in terms.keys():
-				if (t, image.id) in xpos:
-					F.write('%d %d %d %f %f\n' % (
-					t, xpos[(t, image.id)], ypos[(t, image.id)], xpos[(t, image.id)] / float(image.width),
-					ypos[(t, image.id)] / float(image.height)))
-			F.close()
-
-
+		term_list = range(1, tmax+1)
 		depths = 1. / (2. ** np.arange(conn.parameters.model_depth))
 
-		(xc, yc, xr, yr, ims, t_to_i, i_to_t) = getallcoords(in_txt)
-
-		if conn.parameters.cytomine_id_terms == 'all':
-			term_list = t_to_i.keys()
-		else:
-			term_list = [int(term) for term in conn.parameters.cytomine_id_terms.split(',')]
-
-		if conn.parameters.cytomine_training_images == 'all':
-			tr_im = ims
-		else:
-			tr_im = [int(id_im) for id_im in conn.parameters.cytomine_training_images.split(',')]
+		tr_im = [int(id_im) for id_im in conn.parameters.cytomine_training_images.split(',')]
 
 		DATA = None
 		REP = None
 		be = 0
 
-
-		#leprogres = 10
-		#pr_spacing = 90/len(term_list)
-		#print(term_list)
 		sfinal = ""
-		for id_term in term_list:
+		for id_term in conn.monitor(term_list, start=10, end=90, period=0.05, prefix="Model building for terms..."):
 			sfinal+="%d "%id_term
-			#leprogres += pr_spacing
-			conn.job.update(progress=0, statusComment="Building model for annotation %d"%id_term)
-
-			(xc, yc, xr, yr) = getcoordsim(in_txt, id_term, tr_im)
+			(xc, yc, xr, yr) = getcoordsim_neubias(gt_path, id_term, tr_im)
 			nimages = np.max(xc.shape)
 			mx = np.mean(xr)
 			my = np.mean(yr)
@@ -159,7 +111,7 @@ def main():
 				else:
 					rangrange = conn.parameters.model_angle
 
-				T = build_datasets_rot_mp(in_path, tr_im, xc, yc, conn.parameters.model_R, conn.parameters.model_RMAX, conn.parameters.model_P, conn.parameters.model_step, rangrange, conn.parameters.model_wsize, conn.parameters.model_feature_type, feature_parameters, depths, nimages, conn.parameters.image_type, conn.parameters.model_njobs)
+				T = build_datasets_rot_mp(in_path, tr_im, xc, yc, conn.parameters.model_R, conn.parameters.model_RMAX, conn.parameters.model_P, conn.parameters.model_step, rangrange, conn.parameters.model_wsize, conn.parameters.model_feature_type, feature_parameters, depths, nimages, 'tif', conn.parameters.model_njobs)
 				for i in range(len(T)):
 					(data, rep, img) = T[i]
 					(height, width) = data.shape
@@ -181,8 +133,11 @@ def main():
 			clf = clf.fit(DATA, REP)
 
 			parameters_hash = {}
-
-			parameters_hash['cytomine_id_terms'] = conn.parameters.cytomine_id_terms
+			tstring = ""
+			for id_term in term_list:
+				tstring = tstring+"%d,"%(id_term)
+			tstring = tstring.rstrip(',')
+			parameters_hash['cytomine_id_terms'] = tstring
 			parameters_hash['model_R'] = conn.parameters.model_R
 			parameters_hash['model_RMAX'] = conn.parameters.model_RMAX
 			parameters_hash['model_P'] = conn.parameters.model_P
@@ -197,12 +152,10 @@ def main():
 			parameters_hash['feature_haar_n'] = conn.parameters.model_feature_haar_n
 			parameters_hash['feature_gaussian_n'] = conn.parameters.model_feature_gaussian_n
 			parameters_hash['feature_gaussian_std'] = conn.parameters.model_feature_gaussian_std
-			parameters_hash['image_type'] = conn.parameters.image_type
 
 			model_filename = joblib.dump(clf, os.path.join(out_path, '%d_model.joblib' % (id_term)), compress=3)[0]
 			cov_filename = joblib.dump([mx, my, cm], os.path.join(out_path, '%d_cov.joblib' % (id_term)), compress=3)[0]
 			parameter_filename = joblib.dump(parameters_hash, os.path.join(out_path, '%d_parameters.joblib' % id_term), compress=3)[0]
-			conn.job.update(progress=0, statusComment="Uploading model for annotation %d" % id_term)
 			AttachedFile(
 				conn.job,
 				domainIdent=conn.job.id,
