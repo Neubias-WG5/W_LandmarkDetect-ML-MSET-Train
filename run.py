@@ -71,7 +71,7 @@ def main():
 		term_list = range(1, tmax+1)
 		depths = 1. / (2. ** np.arange(conn.parameters.model_depth))
 
-		tr_im = [int(id_im) for id_im in conn.parameters.cytomine_training_images.split(',')]
+		tr_im = [int(image.rstrip('.tif')) for image in os.listdir(in_path) if image.endswith('.tif')]
 
 		DATA = None
 		REP = None
@@ -81,8 +81,6 @@ def main():
 			sfinal += "%d " % id_term
 		sfinal = sfinal.rstrip(' ')
 		for id_term in conn.monitor(term_list, start=10, end=90, period=0.05, prefix="Model building for terms..."):
-			print('wtf, termid', id_term)
-
 			(xc, yc, xr, yr) = getcoordsim_neubias(gt_path, id_term, tr_im)
 			nimages = np.max(xc.shape)
 			mx = np.mean(xr)
