@@ -71,7 +71,7 @@ def main():
 		term_list = range(1, tmax+1)
 		depths = 1. / (2. ** np.arange(conn.parameters.model_depth))
 
-		tr_im = [int(image.rstrip('.tif')) for image in os.listdir(in_path) if image.endswith('.tif')]
+		tr_im = [int(id_im) for id_im in conn.parameters.cytomine_training_images.split(',')]	
 
 		DATA = None
 		REP = None
